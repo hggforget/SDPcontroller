@@ -23,10 +23,21 @@
 var tls    = require('tls');
 var fs     = require('fs');
 var mysql  = require("mysql");
+var axios  = require('axios');
 var credentialMaker = require('./sdpCredentialMaker');
 var prompt = require("prompt");
+var ws = require("ws");
+var r = require("jsrsasign");
+const {socketTimeout} = require("./config");
+var sock=null;
+const cert = new r.X509();
+const input = fs.readFileSync("../certs/2.crt", "utf-8");
+cert.readCertPEM(input);
+const subject = cert.getSubject();
+const mysdpId = subject.array[5][0].value;
 
 // If the user specified the config path, get it
+// 提取控制器配置
 if(process.argv.length > 2) {
     try {
         var config = require(process.argv[2]);
@@ -61,6 +72,7 @@ var lastConnectionCheck = new Date();
 
 
 // check a couple config settings
+// 检查config
 if(config.encryptionKeyLen < encryptionKeyLenMin
    || config.encryptionKeyLen > encryptionKeyLenMax)
 {
@@ -189,8 +201,7 @@ function startServer() {
         // for client certs created by us
         ca: [ fs.readFileSync(config.caCert) ]
     };
-    
-    
+
     // Start a TLS Server
     var server = tls.createServer(options, function (socket) {
     
@@ -214,17 +225,20 @@ function startServer() {
         var sizeBuffer = Buffer.allocUnsafe(MSG_SIZE_FIELD_LEN);
         var messageBuffer = Buffer.allocUnsafe(0);
 
+        //connectionID循环
         if(Number.MAX_SAFE_INTEGER == connectionId)   // 9007199254740991
             nextConnectionId = 1;
         else
             nextConnectionId += 1;
         
         // Identify the connecting client or gateway
+        // 获得接入者的标识
         var sdpId = parseInt(socket.getPeerCertificate().subject.CN);
         
         console.log("Connection from SDP ID " + sdpId + ", connection ID " + connectionId);
         
         // Set the socket timeout to watch for inactivity
+        // 长时间未响应即移除该连接
         if(config.socketTimeout) 
             socket.setTimeout(config.socketTimeout, function() {
                 console.error("Connection to SDP ID " + sdpId + ", connection ID " + connectionId + " has timed out. Disconnecting.");
@@ -235,9 +249,11 @@ function startServer() {
             });
         
         // Handle incoming requests from members
+        // 处理组件的请求  没看太明白
         socket.on('data', function (data) {
             while(data.length) {
                 // have we set the full message size variable yet
+                // 检查是否设置了信息大小
                 if(expectedMessageSize == 0) {
                     sizeBytesNeeded = MSG_SIZE_FIELD_LEN - totalSizeBytesReceived;
 
@@ -355,6 +371,7 @@ function startServer() {
                     }
                     
                     // first ensure no duplicate connection entries are left around
+                    // 首先确定没有重复连接
                     for(var idx = 0; idx < destList.length; idx++) {
                         if(destList[idx].sdpId == memberDetails.sdpid) {
                             // this next call triggers socket.on('end'...
@@ -409,7 +426,8 @@ function startServer() {
         });
     
         
-        // Parse SDP messages 
+        // Parse SDP messages
+        // 解析消息
         function processMessage(data) {
             if(config.debug) {
                 console.log("Message Data Received: ");
@@ -469,8 +487,10 @@ function startServer() {
                 console.error("Invalid message received, invalid or missing action");
                 handleBadMessage(data.toString());
             }
-        }    
-        
+        }
+
+        //处理保活
+
         function handleKeepAlive() {
             if (config.debug) {
                 console.log("Received keep_alive from SDP ID "+memberDetails.sdpid+", responding now.");
@@ -493,8 +513,9 @@ function startServer() {
             //console.log("keepAlive message written to socket");
         
         }
-    
-    
+
+        //更新凭据  更新后则关闭连接
+
         function handleCredentialUpdate() {
             if (dataTransmitTries >= config.maxDataTransmitTries) {
                 // Data transmission has failed
@@ -843,7 +864,7 @@ function startServer() {
                     
         } // END FUNCTION notifyGateways
       
-    
+        //通知gateway 给client 开端口
         function notifyGateway(gatewaySdpId, clientSdpId, service_list, open_ports, encKey, hmacKey) {
         
             var gatewaySocket = null;
@@ -1695,10 +1716,15 @@ function startServer() {
     
     // Put a friendly message on the terminal of the server.
     console.log("SDP Controller running at port " + config.serverPort);
+    createSock();
+
 }  // END function startServer
 
 
 function writeToSocket(theSocket, theMsg, endTheSocket) {
+    var now = new Date().Format("yyyy-MM-dd HH:mm:ss");
+    var jsonMsg = {'from':mysdpId,'upload_date':now,'Msg':theMsg};
+    sock.send(JSON.stringify(jsonMsg));
     if(config.debug)
         console.log("\n\nSENDING MESSAGE:\n"+theMsg+"\n\n");
     var theMsg_buf = Buffer.allocUnsafe(MSG_SIZE_FIELD_LEN + theMsg.length);
@@ -1748,7 +1774,7 @@ function cleanOpenConnectionTable() {
                     connection.release();
                     if(config.debug) console.log("No open connections found that need to be removed.");
                     return;
-                }
+            }
                 
                 if(config.debug) console.log("removeOpenConnections query found connections that need removal.");
                             
@@ -2356,4 +2382,70 @@ function sdpConfigException(configName, correctiveMessage) {
     this.message = "Invalid entry for " + configName + "\n" + correctiveMessage;
 }
 
+function sendmessage(dst,msg) {
+    axios({
+        method:"post",
+        url:"http://localhost:8000/LogConnection/",
+        headers: {
+            "Content-Type": "application/json;charset=UTF-8"
+        },
+        withCredentials:true,
+        data:{
+            log:msg
+        }
+    }).then((res)=>{
+        console.log(res.data);
+    });
+}
+
+// buffer转16进制
+function buffer_to_hex(__buffer){
+    var uarray = Array.prototype.slice.call(__buffer)
+    return uarray.map(el=>Number(el).toString(16))
+}
+
+
+function createSock(){
+    var now = new Date().Format("yyyy-MM-dd HH:mm:ss");
+    sock = new ws("ws://localhost:8000/ws/log_manager/asda/");
+    data = [{'Subject':subject}]
+    sock.on("open", function () {
+        console.log("connect success !!!!");
+        sock.send(JSON.stringify({'from':mysdpId,'upload_date':now,'Msg':JSON.stringify({'action':'connect','data':data})}));
+    });
+
+    sock.on("error", function(err) {
+        console.log("error: ", err);
+    });
+
+    sock.on("close", function() {
+        console.log("close");
+    });
+
+    sock.on("message", function(data) {
+        jsondata = JSON.parse(data);
+        jsonMsg = JSON.parse(jsondata.message.Msg);
+        console.log("Msg received :"+jsonMsg.action);
+    });
+}
+
+Date.prototype.Format = function (fmt) {
+    var o = {
+        "M+": this.getMonth() + 1, //月份
+        "d+": this.getDate(), //日
+        "H+": this.getHours(), //小时
+        "m+": this.getMinutes(), //分
+        "s+": this.getSeconds(), //秒
+        "q+": Math.floor((this.getMonth() + 3) / 3), //季度
+        "S": this.getMilliseconds() //毫秒
+    };
+    if (/(y+)/.test(fmt)) fmt = fmt.replace(RegExp.$1, (this.getFullYear() + "").substr(4 - RegExp.$1.length));
+    for (var k in o)
+        if (new RegExp("(" + k + ")").test(fmt)) fmt = fmt.replace(RegExp.$1, (RegExp.$1.length == 1) ? (o[k]) : (("00" + o[k]).substr(("" + o[k]).length)));
+    return fmt;
+}
+
+var date1 = new Date().Format("yyyy-MM-dd");
+var date2 = new Date().Format("yyyy-MM-dd HH:mm:ss");
+var date3 = new Date().Format("qq ");
 

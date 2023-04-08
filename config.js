@@ -22,23 +22,23 @@ module.exports = {
 	'allowLegacyAccessRequests': false,
 
 	// can create these using ./setup/create-certs.sh
-	'serverCert': './path/server.crt',
-	'serverKey':  './path/server.key',
+	'serverCert': '../certs/2.crt',
+	'serverKey':  '../certs/2.key',
 
 	// to be prompted for a password, set this field
 	// to a null string using '' (that's 2 single quotes
 	// with no spaces between)
-	'serverKeyPassword': 'password',
+	'serverKeyPassword': '',
 	'serverKeyPasswordRequired': true,
 
 	// can create these using ./setup/create-certs.sh
-	'caCert': './path/ca.crt',
-	'caKey': './path/ca.key',
+	'caCert': '../certs/ca.crt',
+	'caKey': '../certs/ca.key',
 
 	// to be prompted for a password, delete this field or
 	// set it to a null string using '' (that's 2 single 
 	// quotes with no spaces between)
-	'caKeyPassword': 'password',
+	'caKeyPassword': '',
 	'caKeyPasswordRequired': true,
 
 	// how many days new certificates should be good for
@@ -52,13 +52,13 @@ module.exports = {
 
 	// database options
 	'dbHost': 'localhost',
-	'dbUser': 'sdp_controller',
+	'dbUser': 'root',
 	'dbPasswordRequired': true,
 
 	// to be prompted for a password, delete this field or
 	// set it to a null string using '' (that's 2 single 
 	// quotes with no spaces between)
-    'dbPassword': 'password',
+    'dbPassword': '123456',
     'dbName': 'sdp',
 
     // if any of these are exceeded, the controller 
